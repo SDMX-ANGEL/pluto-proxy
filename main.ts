@@ -9,7 +9,12 @@ Deno.serve(async (req) => {
   const channelId = match[1];
 
   try {
-    const apiUrl = `https://api.pluto.tv/v2/channels?start=now&stop=now&channelIds=${channelId}&deviceType=web&appName=web&appVersion=9.20.0&clientID=abc123&deviceId=abc123&lang=es`;
+    const now = new Date();
+    const stop = new Date(now.getTime() + 60 * 60 * 1000); // +1 hora
+    const start = now.toISOString();
+    const stopStr = stop.toISOString();
+
+    const apiUrl = `https://api.pluto.tv/v2/channels?start=${encodeURIComponent(start)}&stop=${encodeURIComponent(stopStr)}&channelIds=${channelId}&deviceType=web&appName=web&appVersion=9.20.0&clientID=abc123&deviceId=abc123&lang=es`;
 
     const res = await fetch(apiUrl, {
       headers: {
@@ -21,13 +26,10 @@ Deno.serve(async (req) => {
     });
 
     const data = await res.json();
-
-    // Buscar la URL del stream en diferentes rutas posibles
     const channel = Array.isArray(data) ? data[0] : data?.data?.[0] ?? data;
     const streamUrl =
       channel?.stitched?.urls?.[0]?.url ||
       channel?.streamingUrl ||
-      channel?.url ||
       channel?.stitchedUrl;
 
     if (!streamUrl) {
