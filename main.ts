@@ -9,7 +9,8 @@ Deno.serve(async (req) => {
   const channelId = match[1];
 
   try {
-    const apiUrl = `https://api.pluto.tv/v2/channels?channelIds=${channelId}&deviceType=web&appName=web&appVersion=9.20.0&clientID=abc123&deviceId=abc123&lang=es`;
+    const now = new Date().toISOString();
+    const apiUrl = `https://api.pluto.tv/v2/channels?channelIds=${channelId}&deviceType=web&appName=web&appVersion=9.20.0&clientID=abc123&deviceId=abc123&lang=es&serverNow=${encodeURIComponent(now)}`;
 
     const res = await fetch(apiUrl, {
       headers: {
@@ -19,6 +20,11 @@ Deno.serve(async (req) => {
         "Referer": "https://pluto.tv/",
       },
     });
+
+    if (!res.ok) {
+        const errorText = await res.text();
+        return new Response(`Error: ${errorText}`, { status: res.status });
+    }
 
     const data = await res.json();
     const channel = Array.isArray(data) ? data[0] : null;
@@ -30,6 +36,6 @@ Deno.serve(async (req) => {
 
     return Response.redirect(streamUrl, 302);
   } catch (e) {
-    return new Response("Error: " + e.message, { status: 500 });
+    return new Response("Error: " + (e as Error).message, { status: 500 });
   }
 });
