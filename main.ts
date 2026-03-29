@@ -9,29 +9,36 @@ Deno.serve(async (req) => {
   const channelId = match[1];
 
   try {
-    // 1. Generamos un ID de dispositivo aleatorio para simular un usuario nuevo
     const deviceId = crypto.randomUUID();
-
-    // 2. Le pedimos a la API oficial de Pluto TV los datos de conexión frescos
     const bootUrl = `https://boot.pluto.tv/v4/production/info?appName=web&appVersion=unknown&deviceVersion=unknown&deviceModel=web&deviceMake=unknown&deviceType=web&clientID=${deviceId}`;
     
-    const response = await fetch(bootUrl);
-    const data = await response.json();
+    // Disfrazamos la petición para que parezca un navegador Chrome en Windows
+    const response = await fetch(bootUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Origin": "https://pluto.tv",
+        "Referer": "https://pluto.tv/"
+      }
+    });
 
-    // 3. Extraemos los parámetros mágicos (esto incluye un token "jwt" recién horneado)
+    if (!response.ok) {
+        return new Response(`Error de seguridad: Pluto TV bloqueó la conexión (HTTP ${response.status})`, { status: 500 });
+    }
+
+    const data = await response.json();
     const stitcherParams = data.stitcherParams;
 
     if (!stitcherParams) {
-      return new Response("Error: Pluto TV no devolvió el token.", { status: 500 });
+      // Si no hay token, mostramos la respuesta real de Pluto para ver qué pasó
+      return new Response(`Pluto TV no dio el token. Respuesta del servidor: ${JSON.stringify(data)}`, { status: 500 });
     }
 
-    // 4. Construimos la URL final uniendo el canal con los parámetros nuevos
     const finalUrl = `https://stitcher-ipv4.pluto.tv/v2/stitch/embed/hls/channel/${channelId}/master.m3u8${stitcherParams}`;
-
-    // 5. Hacemos la redirección hacia el video
     return Response.redirect(finalUrl, 302);
 
   } catch (error) {
-    return new Response("Error interno del servidor.", { status: 500 });
+    // @ts-ignore: Para capturar el mensaje de error de Deno
+    return new Response(`Error interno de Deno: ${error.message}`, { status: 500 });
   }
 });
