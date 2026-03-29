@@ -10,7 +10,8 @@ Deno.serve(async (req) => {
 
   try {
     const now = new Date().toISOString();
-    const apiUrl = `https://api.pluto.tv/v2/channels?channelIds=${channelId}&deviceType=web&appName=web&appVersion=9.20.0&clientID=abc123&deviceId=abc123&lang=es&serverNow=${encodeURIComponent(now)}`;
+    
+    const apiUrl = `https://api.pluto.tv/v2/channels?channelIds=${channelId}&deviceType=web&deviceMake=web&deviceModel=web&appName=web&appVersion=9.20.0&clientID=abc123&deviceId=abc123&lang=es&serverNow=${encodeURIComponent(now)}`;
 
     const res = await fetch(apiUrl, {
       headers: {
@@ -28,10 +29,14 @@ Deno.serve(async (req) => {
 
     const data = await res.json();
     const channel = Array.isArray(data) ? data[0] : null;
-    const streamUrl = channel?.stitched?.urls?.[0]?.url;
+    let streamUrl = channel?.stitched?.urls?.[0]?.url;
 
     if (!streamUrl) {
       return new Response("Canal no encontrado", { status: 404 });
+    }
+
+    if (!streamUrl.includes("deviceModel=")) {
+      streamUrl += "&deviceMake=web&deviceModel=web";
     }
 
     return Response.redirect(streamUrl, 302);
