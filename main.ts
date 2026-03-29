@@ -1,7 +1,61 @@
 Deno.serve(async (req) => {
   const url = new URL(req.url);
-  const match = url.pathname.match(/^\/pluto\/([a-f0-9]+)$/i);
 
+  if (url.pathname.startsWith('/proxy')) {
+      const targetUrl = url.searchParams.get('url');
+      if (!targetUrl) return new Response("Falta url", { status: 400 });
+
+      try {
+          const res = await fetch(targetUrl, {
+              headers: {
+                  "User-Agent": "Mozilla/5.0",
+                  "Referer": "https://pluto.tv/"
+              }
+          });
+
+          const contentType = res.headers.get("content-type") || "";
+          
+          if (contentType.includes("mpegurl") || targetUrl.includes(".m3u8") || targetUrl.includes(".m3u")) {
+              const text = await res.text();
+              const parsedTarget = new URL(targetUrl);
+
+              const fixedText = text.split('\n').map(line => {
+                  const trimmed = line.trim();
+                  if (trimmed && !trimmed.startsWith('#')) {
+                      const absoluteUrl = new URL(trimmed, parsedTarget.href);
+                      // Mantenemos los tokens de seguridad de Pluto TV
+                      parsedTarget.searchParams.forEach((value, key) => {
+                          if (!absoluteUrl.searchParams.has(key)) {
+                              absoluteUrl.searchParams.set(key, value);
+                          }
+                      });
+                      return `${url.origin}/proxy?url=${encodeURIComponent(absoluteUrl.href)}`;
+                  }
+                  return trimmed;
+              }).join('\n');
+
+              return new Response(fixedText, {
+                  status: 200,
+                  headers: {
+                      "Content-Type": "application/vnd.apple.mpegurl",
+                      "Access-Control-Allow-Origin": "*"
+                  }
+              });
+          }
+
+          return new Response(res.body, {
+              status: res.status,
+              headers: {
+                  "Content-Type": contentType || "video/MP2T",
+                  "Access-Control-Allow-Origin": "*"
+              }
+          });
+      } catch (e) {
+          return new Response("Error proxy", { status: 500 });
+      }
+  }
+
+  const match = url.pathname.match(/^\/pluto\/([a-f0-9]+)$/i);
   if (!match) {
     return new Response("Uso: /pluto/{channelId}", { status: 400 });
   }
@@ -10,8 +64,7 @@ Deno.serve(async (req) => {
 
   try {
     const now = new Date().toISOString();
-
-    const apiUrl = `https://api.pluto.tv/v2/channels?channelIds=${channelId}&deviceType=web&deviceMake=web&deviceModel=web&appName=web&appVersion=9.20.0&clientID=abc123&deviceId=abc123&lang=es&serverNow=${encodeURIComponent(now)}`;
+    let apiUrl = `https://api.pluto.tv/v2/channels?channelIds=${channelId}&deviceType=web&deviceMake=web&deviceModel=web&appName=web&appVersion=9.20.0&clientID=abc123&deviceId=abc123&lang=es&serverNow=${encodeURIComponent(now)}`;
 
     const res = await fetch(apiUrl, {
       headers: {
@@ -23,8 +76,7 @@ Deno.serve(async (req) => {
     });
 
     if (!res.ok) {
-        const errorText = await res.text();
-        return new Response(`Error: ${errorText}`, { status: res.status });
+        return new Response(`Error: ${await res.text()}`, { status: res.status });
     }
 
     const data = await res.json();
@@ -47,8 +99,24 @@ Deno.serve(async (req) => {
     });
 
     const m3u8Text = await m3u8Res.text();
+    const parsedStreamUrl = new URL(streamUrl);
 
-    return new Response(m3u8Text, {
+    // Reescribimos la lista maestra para pasar por nuestro proxy
+    const fixedM3u8 = m3u8Text.split('\n').map(line => {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#')) {
+            const variantUrl = new URL(trimmed, parsedStreamUrl.href);
+            parsedStreamUrl.searchParams.forEach((value, key) => {
+                if (!variantUrl.searchParams.has(key)) {
+                    variantUrl.searchParams.set(key, value);
+                }
+            });
+            return `${url.origin}/proxy?url=${encodeURIComponent(variantUrl.href)}`;
+        }
+        return trimmed;
+    }).join('\n');
+
+    return new Response(fixedM3u8, {
         status: 200,
         headers: {
             "Content-Type": "application/vnd.apple.mpegurl",
