@@ -10,7 +10,8 @@ Deno.serve(async (req) => {
 
   try {
     const now = new Date().toISOString();
-    
+    const clientIp = req.headers.get("x-forwarded-for") || "";
+
     const apiUrl = `https://api.pluto.tv/v2/channels?channelIds=${channelId}&deviceType=web&deviceMake=web&deviceModel=web&appName=web&appVersion=9.20.0&clientID=abc123&deviceId=abc123&lang=es&serverNow=${encodeURIComponent(now)}`;
 
     const res = await fetch(apiUrl, {
@@ -19,6 +20,7 @@ Deno.serve(async (req) => {
         "Accept": "application/json",
         "Origin": "https://pluto.tv",
         "Referer": "https://pluto.tv/",
+        "X-Forwarded-For": clientIp
       },
     });
 
