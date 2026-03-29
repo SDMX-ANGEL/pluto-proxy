@@ -1,4 +1,4 @@
-Deno.serve(async (req, info) => {
+Deno.serve(async (req) => {
   const url = new URL(req.url);
   const match = url.pathname.match(/^\/pluto\/([a-f0-9]+)$/i);
 
@@ -11,15 +11,6 @@ Deno.serve(async (req, info) => {
   try {
     const now = new Date().toISOString();
 
-    let clientIp = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
-                   req.headers.get("x-real-ip") ||
-                   req.headers.get("cf-connecting-ip") ||
-                   "";
-
-    if (!clientIp && info?.remoteAddr?.transport === "tcp") {
-        clientIp = info.remoteAddr.hostname;
-    }
-
     const apiUrl = `https://api.pluto.tv/v2/channels?channelIds=${channelId}&deviceType=web&deviceMake=web&deviceModel=web&appName=web&appVersion=9.20.0&clientID=abc123&deviceId=abc123&lang=es&serverNow=${encodeURIComponent(now)}`;
 
     const res = await fetch(apiUrl, {
@@ -27,11 +18,7 @@ Deno.serve(async (req, info) => {
         "User-Agent": "Mozilla/5.0",
         "Accept": "application/json",
         "Origin": "https://pluto.tv",
-        "Referer": "https://pluto.tv/",
-        "X-Forwarded-For": clientIp,
-        "X-Real-IP": clientIp,
-        "CF-Connecting-IP": clientIp,
-        "True-Client-IP": clientIp
+        "Referer": "https://pluto.tv/"
       },
     });
 
@@ -52,7 +39,23 @@ Deno.serve(async (req, info) => {
       streamUrl += "&deviceMake=web&deviceModel=web";
     }
 
-    return Response.redirect(streamUrl, 302);
+    const m3u8Res = await fetch(streamUrl, {
+        headers: {
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://pluto.tv/"
+        }
+    });
+
+    const m3u8Text = await m3u8Res.text();
+
+    return new Response(m3u8Text, {
+        status: 200,
+        headers: {
+            "Content-Type": "application/vnd.apple.mpegurl",
+            "Access-Control-Allow-Origin": "*"
+        }
+    });
+
   } catch (e) {
     return new Response("Error: " + (e as Error).message, { status: 500 });
   }
