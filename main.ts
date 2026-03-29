@@ -1,130 +1,13 @@
-Deno.serve(async (req) => {
+Deno.serve((req) => {
   const url = new URL(req.url);
+  const match = url.pathname.match(/^\/pluto\/([a-z0-9]+)(?:\.m3u8)?$/i);
 
-  if (url.pathname.startsWith('/proxy')) {
-      const targetUrl = url.searchParams.get('url');
-      if (!targetUrl) return new Response("Falta url", { status: 400 });
-
-      try {
-          const res = await fetch(targetUrl, {
-              headers: {
-                  "User-Agent": "Mozilla/5.0",
-                  "Referer": "https://pluto.tv/"
-              }
-          });
-
-          const contentType = res.headers.get("content-type") || "";
-          
-          if (contentType.includes("mpegurl") || targetUrl.includes(".m3u8") || targetUrl.includes(".m3u")) {
-              const text = await res.text();
-              const parsedTarget = new URL(targetUrl);
-
-              const fixedText = text.split('\n').map(line => {
-                  const trimmed = line.trim();
-                  if (trimmed && !trimmed.startsWith('#')) {
-                      const absoluteUrl = new URL(trimmed, parsedTarget.href);
-                      // Mantenemos los tokens de seguridad de Pluto TV
-                      parsedTarget.searchParams.forEach((value, key) => {
-                          if (!absoluteUrl.searchParams.has(key)) {
-                              absoluteUrl.searchParams.set(key, value);
-                          }
-                      });
-                      return `${url.origin}/proxy?url=${encodeURIComponent(absoluteUrl.href)}`;
-                  }
-                  return trimmed;
-              }).join('\n');
-
-              return new Response(fixedText, {
-                  status: 200,
-                  headers: {
-                      "Content-Type": "application/vnd.apple.mpegurl",
-                      "Access-Control-Allow-Origin": "*"
-                  }
-              });
-          }
-
-          return new Response(res.body, {
-              status: res.status,
-              headers: {
-                  "Content-Type": contentType || "video/MP2T",
-                  "Access-Control-Allow-Origin": "*"
-              }
-          });
-      } catch (e) {
-          return new Response("Error proxy", { status: 500 });
-      }
-  }
-
-  const match = url.pathname.match(/^\/pluto\/([a-f0-9]+)$/i);
   if (!match) {
-    return new Response("Uso: /pluto/{channelId}", { status: 400 });
+    return new Response("Uso: /pluto/{channelId}.m3u8", { status: 400 });
   }
 
   const channelId = match[1];
+  const plutoSamsungUrl = `https://stitcher-ipv4.pluto.tv/v2/stitch/embed/hls/channel/${channelId}/master.m3u8?deviceType=samsung-tvplus&deviceMake=samsung&deviceModel=samsung&deviceVersion=unknown&appVersion=unknown&deviceLat=0&deviceLon=0&deviceDNT=%7BTARGETOPT%7D&deviceId=%7BPSID%7D&advertisingId=%7BPSID%7D&us_privacy=1YNY&samsung_app_domain=%7BAPP_DOMAIN%7D&samsung_app_name=%7BAPP_NAME%7D&profileLimit=&profileFloor=&embedPartner=samsung-tvplus&masterJWTPassthrough=1&authToken=eyJhbGciOiJIUzI1NiIsImtpZCI6IjI4NWVkZDI0LWUzZGMtNGMxNi04YjUwLTE5ZGI0ODY3M2UwOSIsInR5cCI6IkpXVCJ9.eyJwYXJ0bmVyIjoic2Ftc3VuZ3R2cGx1cyIsImZlYXR1cmVzIjp7Im11bHRpUG9kQWRzIjp7ImNvaG9ydCI6IiIsImVuYWJsZWQiOnRydWV9LCJzdGl0Y2hlckhsc05nIjp7ImRlbXV4ZWRBdWRpbyI6ImppdCJ9LCJzdGl0Y2hlclBhcnRuZXJTaG93U2xhdGUiOnsiZW5hYmxlZCI6dHJ1ZX19LCJpc3MiOiJzZXJ2aWNlLXBhcnRuZXItYXV0aC5wbHV0by50diIsInN1YiI6InByaTp2MTpwbHV0bzpkZXZpY2VzOmMyRnRjM1Z1WjNSMmNHeDFjdz09IiwiYXVkIjoiKi5wbHV0by50diIsImV4cCI6MTc3NDgwNTI0OSwiaWF0IjoxNzc0NzE4ODQ5LCJqdGkiOiIyZTk0NjYyNC04Njk4LTQwN2MtOWJiMy04MjQxMjA0ZWM2OWEifQ.V8xpvN0npjRuBa85tq4SKXS23taLGoG6zq80P0mpL-Q`;
 
-  try {
-    const now = new Date().toISOString();
-    let apiUrl = `https://api.pluto.tv/v2/channels?channelIds=${channelId}&deviceType=web&deviceMake=web&deviceModel=web&appName=web&appVersion=9.20.0&clientID=abc123&deviceId=abc123&lang=es&serverNow=${encodeURIComponent(now)}`;
-
-    const res = await fetch(apiUrl, {
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json",
-        "Origin": "https://pluto.tv",
-        "Referer": "https://pluto.tv/"
-      },
-    });
-
-    if (!res.ok) {
-        return new Response(`Error: ${await res.text()}`, { status: res.status });
-    }
-
-    const data = await res.json();
-    const channel = Array.isArray(data) ? data[0] : null;
-    let streamUrl = channel?.stitched?.urls?.[0]?.url;
-
-    if (!streamUrl) {
-      return new Response("Canal no encontrado", { status: 404 });
-    }
-
-    if (!streamUrl.includes("deviceModel=")) {
-      streamUrl += "&deviceMake=web&deviceModel=web";
-    }
-
-    const m3u8Res = await fetch(streamUrl, {
-        headers: {
-            "User-Agent": "Mozilla/5.0",
-            "Referer": "https://pluto.tv/"
-        }
-    });
-
-    const m3u8Text = await m3u8Res.text();
-    const parsedStreamUrl = new URL(streamUrl);
-
-    // Reescribimos la lista maestra para pasar por nuestro proxy
-    const fixedM3u8 = m3u8Text.split('\n').map(line => {
-        const trimmed = line.trim();
-        if (trimmed && !trimmed.startsWith('#')) {
-            const variantUrl = new URL(trimmed, parsedStreamUrl.href);
-            parsedStreamUrl.searchParams.forEach((value, key) => {
-                if (!variantUrl.searchParams.has(key)) {
-                    variantUrl.searchParams.set(key, value);
-                }
-            });
-            return `${url.origin}/proxy?url=${encodeURIComponent(variantUrl.href)}`;
-        }
-        return trimmed;
-    }).join('\n');
-
-    return new Response(fixedM3u8, {
-        status: 200,
-        headers: {
-            "Content-Type": "application/vnd.apple.mpegurl",
-            "Access-Control-Allow-Origin": "*"
-        }
-    });
-
-  } catch (e) {
-    return new Response("Error: " + (e as Error).message, { status: 500 });
-  }
+  return Response.redirect(plutoSamsungUrl, 302);
 });
