@@ -22,10 +22,15 @@ Deno.serve(async (req) => {
 
     const data = await res.json();
     const channel = Array.isArray(data) ? data[0] : null;
-    const streamUrl = channel?.stitched?.urls?.[0]?.url;
+    let streamUrl = channel?.stitched?.urls?.[0]?.url;
 
     if (!streamUrl) {
       return new Response("Canal no encontrado", { status: 404 });
+    }
+
+    if (!streamUrl.includes("deviceModel")) {
+      const separator = streamUrl.includes("?") ? "&" : "?";
+      streamUrl += `${separator}deviceModel=web&deviceMake=chrome`;
     }
 
     return Response.redirect(streamUrl, 302);
