@@ -1,4 +1,3 @@
-// Pluto TV proxy — renueva el token Samsung en cada petición
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   const match = url.pathname.match(/^\/pluto\/([a-z0-9]+)(?:\.m3u8)?$/i);
@@ -9,59 +8,64 @@ Deno.serve(async (req) => {
 
   const channelId = match[1];
 
-  let authToken: string;
+  let clientID: string;
+  let sessionToken: string;
+
   try {
-    const tokenRes = await fetch(
-      "https://boot.pluto.tv/v4/start?appName=web&appVersion=na&deviceVersion=na&deviceModel=web&deviceMake=chrome&deviceType=web&clientID=na&clientModelNumber=na",
+    const uuid = crypto.randomUUID();
+
+    const bootRes = await fetch(
+      `https://boot.pluto.tv/v4/start?` +
+        `appName=web&appVersion=9.0.0&deviceVersion=130.0.0` +
+        `&deviceModel=web&deviceMake=chrome&deviceType=web` +
+        `&clientID=${uuid}&clientModelNumber=1.0.0` +
+        `&serverSideAds=false&clientTime=${new Date().toISOString()}`,
       {
         headers: {
           "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
           "Accept": "application/json",
+          "Origin": "https://pluto.tv",
+          "Referer": "https://pluto.tv/",
         },
       }
     );
 
-    if (!tokenRes.ok) {
-      throw new Error(`Pluto boot falló: ${tokenRes.status}`);
+    if (!bootRes.ok) {
+      const txt = await bootRes.text();
+      throw new Error(`Boot falló ${bootRes.status}: ${txt.slice(0, 300)}`);
     }
 
-    const tokenData = await tokenRes.json();
-    authToken =
-      tokenData?.sessionToken ??
-      tokenData?.session?.sessionToken ??
-      tokenData?.["user"]?.["session"]?.["token"] ??
-      "";
+    const boot = await bootRes.json();
+    clientID = boot?.clientID ?? uuid;
+    sessionToken = boot?.sessionToken ?? "";
 
-    if (!authToken) {
-      throw new Error("No se encontró sessionToken en la respuesta");
+    if (!sessionToken) {
+      throw new Error(
+        "sessionToken no encontrado. Keys disponibles: " +
+          Object.keys(boot ?? {}).join(", ")
+      );
     }
   } catch (err) {
-    return new Response(`Error obteniendo token: ${err.message}`, {
+    return new Response(`Error obteniendo sesión: ${err.message}`, {
       status: 502,
     });
   }
 
   const plutoUrl =
-    `https://stitcher-ipv4.pluto.tv/v2/stitch/embed/hls/channel/${channelId}/master.m3u8` +
-    `?deviceType=samsung-tvplus` +
-    `&deviceMake=samsung` +
-    `&deviceModel=samsung` +
-    `&deviceVersion=unknown` +
-    `&appVersion=unknown` +
-    `&deviceLat=0` +
-    `&deviceLon=0` +
-    `&deviceDNT=%7BTARGETOPT%7D` +
-    `&deviceId=%7BPSID%7D` +
-    `&advertisingId=%7BPSID%7D` +
+    `https://service-stitcher.clusters.pluto.tv/v2/stitch/hls/channel/${channelId}/master.m3u8` +
+    `?deviceType=web` +
+    `&deviceMake=chrome` +
+    `&deviceModel=web` +
+    `&deviceVersion=130.0.0` +
+    `&appVersion=9.0.0` +
+    `&deviceDNT=0` +
+    `&deviceId=${encodeURIComponent(clientID)}` +
+    `&advertisingId=${encodeURIComponent(clientID)}` +
     `&us_privacy=1YNY` +
-    `&samsung_app_domain=%7BAPP_DOMAIN%7D` +
-    `&samsung_app_name=%7BAPP_NAME%7D` +
-    `&profileLimit=` +
-    `&profileFloor=` +
-    `&embedPartner=samsung-tvplus` +
-    `&masterJWTPassthrough=1` +
-    `&authToken=${encodeURIComponent(authToken)}`;
+    `&sid=${encodeURIComponent(sessionToken)}` +
+    `&authToken=${encodeURIComponent(sessionToken)}`;
 
   return Response.redirect(plutoUrl, 302);
 });
