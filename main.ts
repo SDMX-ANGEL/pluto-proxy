@@ -1,10 +1,9 @@
 Deno.serve(async (req) => {
   const url = new URL(req.url);
 
-  // RUTA 1: EL TÚNEL (Deno descarga y entrega el video para evitar bloqueos)
   if (url.pathname === '/proxy') {
     const target = url.searchParams.get('url');
-    if (!target) return new Response("URL faltante", { status: 400 });
+    if (!target) return new Response("Falta URL", { status: 400 });
 
     try {
       const res = await fetch(target, {
@@ -42,17 +41,38 @@ Deno.serve(async (req) => {
     }
   }
 
-  // RUTA 2: GENERADOR (Aquí añadimos deviceVersion y los demás)
   const match = url.pathname.match(/^\/pluto\/([a-z0-9]+)(?:\.m3u8)?$/i);
   if (!match) return new Response("Uso: /pluto/{id}.m3u8", { status: 400 });
 
   const channelId = match[1];
 
-  // Token estable de Samsung
-  const token = "eyJhbGciOiJIUzI1NiIsImtpZCI6IjI4NWVkZDI0LWUzZGMtNGMxNi04YjUwLTE5ZGI0ODY3M2UwOSIsInR5cCI6IkpXVCJ9.eyJwYXJ0bmVyIjoic2Ftc3VuZ3R2cGx1cyIsImZlYXR1cmVzIjp7Im11bHRpUG9kQWRzIjp7ImNvaG9ydCI6IiIsImVuYWJsZWQiOnRydWV9LCJzdGl0Y2hlckhsc05nIjp7ImRlbXV4ZWRBdWRpbyI6ImppdCJ9LCJzdGl0Y2hlclBhcnRuZXJTaG93U2xhdGUiOnsiZW5hYmxlZCI6dHJ1ZX19LCJpc3MiOiJzZXJ2aWNlLXBhcnRuZXItYXV0aC5wbHV0by50diIsInN1YiI6InByaTp2MTpwbHV0bzpkZXZpY2VzOmMyRnRjM1Z1WjNSMmNHeDFjdz09IiwiYXVkIjoiKi5wbHV0by50diIsImV4cCI6MTc3NDgwNTI0OSwiaWF0IjoxNzc0NzE4ODQ5LCJqdGkiOiIyZTk0NjYyNC04Njk4LTQwN2MtOWJiMy04MjQxMjA0ZWM2OWEifQ.V8xpvN0npjRuBa85tq4SKXS23taLGoG6zq80P0mpL-Q";
+  try {
+    const authRes = await fetch("https://api.pluto.tv/v3/auth/guest", {
+      method: "POST",
+      headers: { 
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      },
+      body: JSON.stringify({ 
+        device: { 
+          sdkGuid: crypto.randomUUID(), 
+          model: "web",
+          make: "web",
+          type: "web"
+        } 
+      })
+    });
 
-  // IMPORTANTE: Ahora incluimos deviceVersion, appVersion y los demás parámetros de identidad
-  const plutoUrl = `https://stitcher-ipv4.pluto.tv/v2/stitch/embed/hls/channel/${channelId}/master.m3u8?deviceType=samsung-tvplus&deviceMake=samsung&deviceModel=samsung&deviceVersion=unknown&appVersion=unknown&deviceDNT=0&advertisingId=0&embedPartner=samsung-tvplus&masterJWTPassthrough=1&authToken=${token}`;
+    const authData = await authRes.json();
+    const newToken = authData.jwt; 
 
-  return Response.redirect(`${url.origin}/proxy?url=${encodeURIComponent(plutoUrl)}`, 302);
+    if (!newToken) throw new Error("No se obtuvo token");
+
+    const plutoUrl = `https://stitcher-ipv4.pluto.tv/v2/stitch/embed/hls/channel/${channelId}/master.m3u8?deviceType=samsung-tvplus&deviceMake=samsung&deviceModel=samsung&deviceVersion=unknown&appVersion=unknown&deviceDNT=0&advertisingId=0&embedPartner=samsung-tvplus&masterJWTPassthrough=1&authToken=${newToken}`;
+
+    return Response.redirect(`${url.origin}/proxy?url=${encodeURIComponent(plutoUrl)}`, 302);
+
+  } catch (e) {
+    return new Response("Error generando token: " + e.message, { status: 500 });
+  }
 });
