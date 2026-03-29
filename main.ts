@@ -1,65 +1,115 @@
+const PLUTO_PARAMS =
+  `?deviceType=samsung-tvplus` +
+  `&deviceMake=samsung` +
+  `&deviceModel=samsung` +
+  `&deviceVersion=unknown` +
+  `&appVersion=unknown` +
+  `&deviceLat=0` +
+  `&deviceLon=0` +
+  `&deviceDNT=%7BTARGETOPT%7D` +
+  `&deviceId=%7BPSID%7D` +
+  `&advertisingId=%7BPSID%7D` +
+  `&us_privacy=1YNY` +
+  `&samsung_app_domain=%7BAPP_DOMAIN%7D` +
+  `&samsung_app_name=%7BAPP_NAME%7D` +
+  `&profileLimit=` +
+  `&profileFloor=` +
+  `&embedPartner=samsung-tvplus` +
+  `&masterJWTPassthrough=1`;
+
 Deno.serve(async (req) => {
   const url = new URL(req.url);
-  const match = url.pathname.match(/^\/pluto\/([a-z0-9]+)(?:\.m3u8)?$/i);
 
-  if (!match) {
-    return new Response("Uso: /pluto/{channelId}.m3u8", { status: 400 });
+  const mainMatch = url.pathname.match(/^\/pluto\/([a-z0-9]+)(?:\.m3u8)?$/i);
+  if (mainMatch) {
+    const channelId = mainMatch[1];
+    const plutoUrl =
+      `https://stitcher-ipv4.pluto.tv/v2/stitch/embed/hls/channel/${channelId}/master.m3u8` +
+      PLUTO_PARAMS;
+
+    const upstream = await fetch(plutoUrl, {
+      headers: {
+        "User-Agent": "PlutoTV/9.0 (SMART-TV; SAMSUNG; SmartTV2022) AppleWebKit/538.1",
+        "Accept": "*/*",
+        "Origin": "https://pluto.tv",
+        "Referer": "https://pluto.tv/",
+      },
+    });
+
+    if (!upstream.ok) {
+      const txt = await upstream.text();
+      return new Response(`Pluto error ${upstream.status}: ${txt}`, { status: upstream.status });
+    }
+
+    const m3u8Text = await upstream.text();
+
+    const baseUrl = `https://stitcher-ipv4.pluto.tv/v2/stitch/embed/hls/channel/${channelId}/`;
+    const proxied = rewriteM3u8(m3u8Text, baseUrl, url.origin);
+
+    return new Response(proxied, {
+      headers: {
+        "Content-Type": "application/x-mpegURL",
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-cache",
+      },
+    });
   }
 
-  const channelId = match[1];
+  if (url.pathname === "/proxy") {
+    const target = url.searchParams.get("url");
+    if (!target) return new Response("Falta url", { status: 400 });
 
-  let sid: string;
-  let deviceId: string;
+    const upstream = await fetch(target, {
+      headers: {
+        "User-Agent": "PlutoTV/9.0 (SMART-TV; SAMSUNG; SmartTV2022) AppleWebKit/538.1",
+        "Accept": "*/*",
+        "Origin": "https://pluto.tv",
+        "Referer": "https://pluto.tv/",
+      },
+    });
 
-  try {
-    const uuid = crypto.randomUUID();
+    const contentType = upstream.headers.get("content-type") ?? "application/octet-stream";
 
-    const bootRes = await fetch(
-      `https://boot.pluto.tv/v4/start` +
-        `?appName=web&appVersion=9.0.0` +
-        `&deviceVersion=130.0.0&deviceModel=web` +
-        `&deviceMake=chrome&deviceType=web` +
-        `&clientID=${uuid}&clientModelNumber=1.0.0` +
-        `&serverSideAds=false` +
-        `&clientTime=${new Date().toISOString()}`,
-      {
+    if (contentType.includes("mpegurl") || contentType.includes("m3u")) {
+      const text = await upstream.text();
+      const base = new URL("./", target).href;
+      const proxied = rewriteM3u8(text, base, url.origin);
+      return new Response(proxied, {
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-          "Accept": "application/json",
-          "Origin": "https://pluto.tv",
-          "Referer": "https://pluto.tv/",
+          "Content-Type": "application/x-mpegURL",
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "no-cache",
         },
-      }
-    );
-
-    if (!bootRes.ok) {
-      const txt = await bootRes.text();
-      throw new Error(`Boot ${bootRes.status}: ${txt.slice(0, 200)}`);
+      });
     }
 
-    const boot = await bootRes.json();
-    sid = boot?.sessionToken ?? "";
-    deviceId = boot?.clientID ?? uuid;
-
-    if (!sid) {
-      throw new Error("Sin sessionToken. Keys: " + Object.keys(boot ?? {}).join(", "));
-    }
-  } catch (err) {
-    return new Response(`Error de sesión: ${err.message}`, { status: 502 });
+    return new Response(upstream.body, {
+      headers: {
+        "Content-Type": contentType,
+        "Access-Control-Allow-Origin": "*",
+        "Cache-Control": "no-cache",
+      },
+    });
   }
-  
-  const plutoUrl =
-    `https://cfd-v4-service-channel-stitcher-use1-1.prd.pluto.tv/v2/stitch/hls/channel/${channelId}/3321280/playlist.m3u8` +
-    `?sid=${encodeURIComponent(sid)}` +
-    `&deviceId=${encodeURIComponent(deviceId)}` +
-    `&deviceType=web` +
-    `&deviceMake=chrome` +
-    `&deviceModel=web` +
-    `&deviceVersion=130.0.0` +
-    `&appVersion=9.0.0` +
-    `&deviceDNT=0` +
-    `&us_privacy=1YNY` +
-    `&jwt=${encodeURIComponent(sid)}`;
 
-  return Response.redirect(plutoUrl, 302);
+  return new Response("Uso: /pluto/{channelId}.m3u8", { status: 400 });
 });
+
+function rewriteM3u8(text: string, baseUrl: string, origin: string): string {
+  return text
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) return line;
+
+      let absUrl: string;
+      if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+        absUrl = trimmed;
+      } else {
+        absUrl = baseUrl + trimmed;
+      }
+
+      return `${origin}/proxy?url=${encodeURIComponent(absUrl)}`;
+    })
+    .join("\n");
+}
